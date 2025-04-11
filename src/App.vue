@@ -2,33 +2,33 @@
     <div>
         <h1>{{ title }}</h1>
         <div class="rating-container">
-            <div v-for="level in levels" :key="level" class="rating-row">
-                <h2>{{ level }}</h2>
+            <div v-for="level in levels" :key="level.name" class="rating-row">
+                <h2>{{ level.name }}</h2>
                 <div
                     class="drop-zone"
                     @dragover.prevent
                     @drop="onDrop(level)"
                 >
                     <div
-                        v-for="item in ratings[level]"
+                        v-for="item in level.items"
                         :key="item.id"
                         class="icon"
                         draggable="true"
-                        @dragstart="onDragStart(item, level)"
+                        @dragstart="onDragStart(item)"
                     >
                         {{ item.name }}
                     </div>
                 </div>
             </div>
         </div>
-        <div class="icons-container" @wheel="onWheel" @dragover.prevent @drop="onDrop('items')">
+        <div class="icons-container" @wheel="onWheel" @dragover.prevent @drop="onDrop(perLevel)">
             <div
-                v-for="(item, index) in items"
+                v-for="(item, index) in perLevel.items"
                 :key="item.id"
-                class="icon"
-                :style="{ zIndex: items.length - index, top: `${index * 5}px`, left: `${index * 5}px` }"
+                class="icon icon-fix-position"
+                :style="item.fixPosition(index)"
                 draggable="true"
-                @dragstart="onDragStart(item, 'items')"
+                @dragstart="onDragStart(item)"
             >
                 {{ item.name }}
             </div>
@@ -39,6 +39,62 @@
 </template>
 
 <script>
+class Item {
+    constructor(id, name, level = null) {
+        this.id = id;
+        this.name = name;
+        this.level = level;
+        level && level.appendItem(this); // 如果有级别，则添加到该级别
+    }
+
+    setLevel(level) {
+        if (this.level) {
+            this.level.removeItem(this); // 从当前级别移除
+        }
+        // 添加到新级别
+        this.level = level;
+        if (this.isInPerlevel()){
+            level.insertItem(this);
+        }
+        else level.appendItem(this); 
+    }
+
+    isInPerlevel() {
+        return this.level.name === '0'; // 需要修正位置的条件
+    }
+
+    fixPosition(index) {
+        if (this.isInPerlevel()) {
+            // 如果在待评级区，设置堆叠效果
+            return {
+                zIndex: this.level.items.length - index,
+                top: `${index * 5}px`, 
+                left: `${index * 5}px`,
+            }
+        }
+        else return {};
+    }
+}
+
+class Level {
+    constructor(name) {
+        this.name = name;
+        this.items = [];
+    }
+
+    appendItem(item) {
+        this.items.push(item);
+    }
+
+    insertItem(item) {
+        this.items.unshift(item);
+    }
+
+    removeItem(item) {
+        this.items = this.items.filter(i => i.id !== item.id);
+    }
+}
+
 export default {
     name: 'App',
     data() {
@@ -46,64 +102,36 @@ export default {
             // 页面标题
             title: '评级功能',
             // 评级等级
-            levels: ['S', 'A', 'B', 'C', 'D', 'E'],
-            // 待评级的对象列表
-            items: [
-                { id: 1, name: '对象1' },
-                { id: 2, name: '对象2' },
-                { id: 3, name: '对象3' },
-            ],
-            // 各评级等级对应的对象
-            ratings: {
-                S: [],
-                A: [],
-                B: [],
-                C: [],
-                D: [],
-                E: [],
+            levels: {
+                S: new Level('S'),
+                A: new Level('A'),
+                B: new Level('B'),
+                C: new Level('C'),
+                D: new Level('D'),
+                E: new Level('E'),
             },
+            // 备选区
+            perLevel : new Level('0'),
+
+            // 待评级对象
+            items: [],
+
             // 当前拖拽的对象
             draggedItem: null,
-            // 当前拖拽对象的来源
-            draggedFrom: null,
         };
     },
     methods: {
         // 拖拽开始时记录拖拽的对象及其来源
-        onDragStart(item, from = null) {
+        onDragStart(item) {
             this.draggedItem = item;
-            this.draggedFrom = from;
         },
         // 拖拽释放时处理对象的移动逻辑
         onDrop(level) {
             if (this.draggedItem) {
-                if (this.draggedFrom && this.draggedFrom !== level) {
-                    // 如果从评级区域拖回待评级区域
-                    if (level === 'items') {
-                        this.items.push(this.draggedItem);
-                        this.ratings[this.draggedFrom] = this.ratings[this.draggedFrom].filter(
-                            (i) => i.id !== this.draggedItem.id
-                        );
-                    } else {
-                        // 从一个评级区域拖到另一个评级区域
-                        if (this.draggedFrom !== 'items') {
-                            this.ratings[this.draggedFrom] = this.ratings[this.draggedFrom].filter(
-                                (i) => i.id !== this.draggedItem.id
-                            );
-                        }
-                        this.ratings[level].push(this.draggedItem);
-                    }
-                }
-
-                // 如果从待评级区域拖到评级区域
-                if (this.draggedFrom === 'items' && level !== 'items') {
-                    this.items = this.items.filter((i) => i.id !== this.draggedItem.id);
-                    this.ratings[level].push(this.draggedItem);
-                }
-
+                // 设置拖拽对象的新级别
+                this.draggedItem.setLevel(level);
                 // 清空拖拽状态
                 this.draggedItem = null;
-                this.draggedFrom = null;
             }
         },
         // 提交评级结果到服务器
@@ -130,31 +158,27 @@ export default {
         onWheel(event) {
             if (this.items.length > 1) {
                 if (event.deltaY > 0) {
-                    // 向下滚动，将第一个元素移到数组末尾
-                    const firstItem = this.items.shift();
-                    this.items.push(firstItem);
+                    const firstItem = this.perLevel.items.shift(); // 移除第一个元素
+                    this.perLevel.items.push(firstItem); // 将其添加到数组末尾
                 } else {
-                    // 向上滚动，将最后一个元素移到数组开头
-                    const lastItem = this.items.pop();
-                    this.items.unshift(lastItem);
+                    const lastItem = this.perLevel.items.pop();
+                    this.perLevel.items.unshift(lastItem);
                 }
             }
         },
         // 重置所有评级，将对象移回待评级区域
         resetRatings() {
-            // 将所有评级对象重置到待评级区域
-            const allItems = Object.values(this.ratings).flat(); // 获取所有评级中的对象
-            this.items = [...this.items, ...allItems]; // 合并到待评级区域
-            this.levels.forEach((level) => {
-                this.ratings[level] = []; // 清空每个评级级别
-            });
-
-            // 确保重置后待评级区的对象堆叠效果
-            this.items = this.items.map((item, index) => ({
-                ...item,
-                zIndex: this.items.length - index, // 设置堆叠顺序
-            }));
+            for(let i = this.items.length - 1; i >= 0; i--) {
+                this.items[i].setLevel(this.perLevel);
+            }
         },
+    },
+    mounted() {
+        // 添加评级对象
+        for (let i = 1; i <= 5; i++) {
+            const item = new Item(i, `元素 ${i}`, this.perLevel);
+            this.items.push(item);
+        }
     },
 };
 </script>
@@ -209,7 +233,10 @@ export default {
     cursor: grab;
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1); /* 添加阴影 */
     transition: transform 0.2s, box-shadow 0.2s; /* 保留交互动画 */
-    position: absolute; /* 确保待评级区对象堆叠 */
+}
+
+.icon-fix-position {
+    position: absolute; /* 设置为绝对定位以支持堆叠 */
 }
 
 .icon:active {
